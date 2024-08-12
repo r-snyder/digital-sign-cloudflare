@@ -1,74 +1,45 @@
 import React, { useState, useEffect } from "react";
 import { Typography, Box } from "@mui/material";
-import QRCode from "qrcode.react"; // Import QRCode component
-import axios from 'axios';
+import QRCode from "qrcode.react";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
+// Define the Event type
 interface Event {
   id: number;
   name: string;
   starts_on: string;
-  image_banner: string;
+  supabase_image_banner: string;
   slug: string;
 }
 
-interface ResponseData {
-  events: Event[];
-}
+const SUPABASE_URL = 'https://bhnjrokjuvogahusomgv.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJobmpyb2tqdXZvZ2FodXNvbWd2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MTkyMzcyNDcsImV4cCI6MjAzNDgxMzI0N30.lh6t4W5oSLqGvOmBwO-F5d_ORvNphl0TnCBmpwdzaXQ';
+
+const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const App: React.FC = () => {
   const [events, setEvents] = useState<Event[]>([]);
   const [currentEventIndex, setCurrentEventIndex] = useState<number>(0);
   const [qrCodes, setQrCodes] = useState<string[]>([]);
 
-  useEffect(() => {
-    const fetchEvents = async () => {
-      try {
-        const response = await axios.get<Event[]>('https://kp-sign.misty-snow-54be.workers.dev/api/events');
-        const eventData: Event[] = response.data;
+  // Fetch events from Supabase
+  const fetchEvents = async () => {
+    const { data, error } = await supabase
+      .from('events')
+      .select('*')
+      .order('starts_on', { ascending: true });
 
-        // Sort events by starts_on date
-        const sortedEvents = [...eventData].sort((a, b) => {
-          const dateA: Date = new Date(a.starts_on);
-          const dateB: Date = new Date(b.starts_on);
-          return dateA.getTime() - dateB.getTime();
-        });
-
-        setEvents(sortedEvents);
-        generateQrCodes(sortedEvents);
-      } catch (error) {
-        console.error('Error fetching events:', error);
-      }
-    };
-
-    // Fetch events initially
-    fetchEvents();
-
-    // Fetch events every 5 minutes
-    const interval = setInterval(fetchEvents, 5 * 60 * 1000);
-
-    return () => clearInterval(interval);
-  }, []);
-
-  useEffect(() => {
-    // Generate QR codes based on the fetched events
-    generateQrCodes(events);
-
-    // Adjust currentEventIndex if the current event is removed
-    if (events.length === 0 || currentEventIndex >= events.length) {
-      setCurrentEventIndex(0); // Reset to the first event
+    if (error) {
+      console.error('Error fetching events:', error.message);
+      return;
     }
-  }, [events]);
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setCurrentEventIndex((prevIndex) =>
-        prevIndex === events.length - 1 ? 0 : prevIndex + 1
-      );
-    }, 15000);
+    const eventsData = data || [];
+    setEvents(eventsData);
+    generateQrCodes(eventsData);
+  };
 
-    return () => clearInterval(interval);
-  }, [events]);
-
+  // Generate QR codes for the events
   const generateQrCodes = (events: Event[]) => {
     const qrCodes = events.map((event) => {
       return `https://kingsplayhouse.com/event-detail-page/?slug=${event.slug}`;
@@ -76,6 +47,54 @@ const App: React.FC = () => {
     setQrCodes(qrCodes);
   };
 
+  // Fetch events initially
+  useEffect(() => {
+    fetchEvents();
+  }, []);
+
+  // Handle changes from Supabase
+  useEffect(() => {
+    const handleChange = (payload: any) => {
+      console.log('Change received!', payload);
+      fetchEvents(); // Refresh events data on change
+    };
+
+    // Subscribe to INSERT, UPDATE, and DELETE events
+    const insertChannel = supabase
+      .channel('schema-db-changes')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'events' }, handleChange)
+      .subscribe();
+
+    const updateChannel = supabase
+      .channel('schema-db-changes')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'events' }, handleChange)
+      .subscribe();
+
+    const deleteChannel = supabase
+      .channel('schema-db-changes')
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'events' }, handleChange)
+      .subscribe();
+
+    return () => {
+      // Unsubscribe when the component unmounts
+      insertChannel.unsubscribe();
+      updateChannel.unsubscribe();
+      deleteChannel.unsubscribe();
+    };
+  }, []);
+
+  // Update the current event index periodically
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentEventIndex((prevIndex) =>
+        prevIndex === events.length - 1 ? 0 : prevIndex + 1
+      );
+    }, 15000); // Change event every 15 seconds
+
+    return () => clearInterval(interval);
+  }, [events]);
+
+  // Format date to a readable format
   const formatDate = (dateString: string) => {
     const options: Intl.DateTimeFormatOptions = { weekday: "long", year: "numeric", month: "long", day: "numeric" };
     return new Date(dateString).toLocaleDateString(undefined, options);
@@ -126,7 +145,7 @@ const App: React.FC = () => {
       >
         {events.length > 0 && (
           <div style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden" }}>
-            <img src={events[currentEventIndex].image_banner} alt={events[currentEventIndex].name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            <img src={events[currentEventIndex].supabase_image_banner} alt={events[currentEventIndex].name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
             <div style={{ position: "absolute", bottom: "16px", right: "16px" }}>
               <QRCode value={qrCodes[currentEventIndex]} size={150} style={{ opacity: 0.7 }} />
             </div>
